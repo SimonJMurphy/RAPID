@@ -757,15 +757,18 @@ class InteractiveHRD:
     
         
 if __name__ == "__main__":
+    from pathlib import Path
     from pandas import read_csv, read_feather
 
-    df_binaries = read_feather("popsynth_HRD_outputs_extended_apr2026.feather")
-    df_no_binaries = read_feather("popsynth_HRD_outputs_no-binaries_extended_apr2026.feather")
-    solar_tracks = read_feather("solar_tracks.feather") 
+    data_dir = Path(__file__).resolve().parent / "data"
 
-    # df_binaries = read_csv("popsynth_HRD_outputs_extended_apr2026.csv")
-    # df_no_binaries = read_csv("popsynth_HRD_outputs_no-binaries_extended_apr2026.csv")
-    # solar_tracks = read_csv("solar_tracks.csv")
+    df_binaries = read_feather(data_dir / "popsynth_HRD_outputs_extended_apr2026.feather")
+    df_no_binaries = read_feather(data_dir / "popsynth_HRD_outputs_no-binaries_extended_apr2026.feather")
+    solar_tracks = read_feather(data_dir / "solar_tracks.feather") 
+
+    # df_binaries = read_csv(data_dir / "popsynth_HRD_outputs_extended_apr2026.csv")
+    # df_no_binaries = read_csv(data_dir / "popsynth_HRD_outputs_no-binaries_extended_apr2026.csv")
+    # solar_tracks = read_csv(data_dir / "solar_tracks.csv")
     default_state = {
         "Teff": 8980, "Lum": 15.0,
         "e_Teff+": 180, "e_Teff-": 180,
