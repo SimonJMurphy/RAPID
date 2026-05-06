@@ -2,11 +2,11 @@
 
 RAPID is an interactive applet for inferring stellar parameters from synthetic populations of rapidly rotating intermediate-mass stars.
 
-The synthetic populations presented here cover stars with masses of roughly $1.4$--$2.5\,M_\odot$ and include the effects of rotation, inclination, unresolved binarity, metallicity variation, and observational uncertainty. Given a target star's effective temperature and luminosity, RAPID estimates posterior distributions for mass, age, and other stellar properties.
+The synthetic populations presented here cover stars with masses of roughly 1.4 to 2.5 $M_\odot$ and include the effects of rotation, inclination, unresolved binarity, metallicity variation, and observational uncertainty. Given a target star's effective temperature and luminosity, RAPID estimates posterior distributions for mass, age, and other stellar properties.
 
 ## Features
 
-- Place a target star on the H--R diagram using $T_{\mathrm{eff}}$ and $L$.
+- Place a target star on the HR diagram using $T_{\mathrm{eff}}$ and $L$.
 - Enter asymmetric uncertainties in $T_{\mathrm{eff}}$ and $L$.
 - Toggle between the full synthetic population and the no-binaries sample.
 - Visualise the distance-weighted probability field around the target.
