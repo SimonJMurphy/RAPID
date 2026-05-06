@@ -1,8 +1,8 @@
 # RAPID: Rotation-Aware Probabilistic Inference Dashboard
 
-RAPID is an interactive applet for inferring stellar parameters from synthetic populations of rapidly rotating intermediate-mass stars. It was developed as a companion tool for a population synthesis study of mass and age uncertainties in A-type stars.
+RAPID is an interactive applet for inferring stellar parameters from synthetic populations of rapidly rotating intermediate-mass stars.
 
-The synthetic populations cover stars with masses of roughly $1.4$--$2.5\,M_\odot$ and include the effects of rotation, inclination, unresolved binarity, metallicity variation, and observational uncertainty. Given a target star's effective temperature and luminosity, RAPID estimates posterior distributions for mass, age, and other stellar properties.
+The synthetic populations presented here cover stars with masses of roughly $1.4$--$2.5\,M_\odot$ and include the effects of rotation, inclination, unresolved binarity, metallicity variation, and observational uncertainty. Given a target star's effective temperature and luminosity, RAPID estimates posterior distributions for mass, age, and other stellar properties.
 
 ## Features
 
