@@ -42,8 +42,8 @@ The repository contains both Feather and CSV versions of the synthetic populatio
 
 | File | Description |
 | --- | --- |
-| `data/popsynth_HRD_outputs_extended_apr2026.feather` | Full synthetic population, including unresolved binaries. |
-| `data/popsynth_HRD_outputs_no-binaries_extended_apr2026.feather` | Synthetic population with no binary companions. |
+| `data/full.feather` | Full synthetic population, including unresolved binaries. |
+| `data/no_binaries.feather` | Synthetic population with no binary companions. |
 | `data/solar_tracks.feather` | Solar-metallicity evolutionary tracks plotted for context. |
 | `data/*.csv` | CSV copies of the same data products. |
 
