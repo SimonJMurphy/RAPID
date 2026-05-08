@@ -762,13 +762,14 @@ if __name__ == "__main__":
 
     data_dir = Path(__file__).resolve().parent / "data"
 
-    df_binaries = read_feather(data_dir / "popsynth_HRD_outputs_extended_apr2026.feather")
-    df_no_binaries = read_feather(data_dir / "popsynth_HRD_outputs_no-binaries_extended_apr2026.feather")
+    df_binaries = read_feather(data_dir / "full.feather")
+    df_no_binaries = read_feather(data_dir / "no_binaries.feather")
     solar_tracks = read_feather(data_dir / "solar_tracks.feather") 
 
     # df_binaries = read_csv(data_dir / "popsynth_HRD_outputs_extended_apr2026.csv")
     # df_no_binaries = read_csv(data_dir / "popsynth_HRD_outputs_no-binaries_extended_apr2026.csv")
     # solar_tracks = read_csv(data_dir / "solar_tracks.csv")
+    
     default_state = {
         "Teff": 8980, "Lum": 15.0,
         "e_Teff+": 180, "e_Teff-": 180,
