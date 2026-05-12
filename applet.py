@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import TextBox, Button, CheckButtons, RadioButtons
@@ -261,8 +262,8 @@ class InteractiveHRD:
         sigma_x = np.where(x >= x0, ex_p, ex_m)[None, :]
         sigma_y = np.where(y >= y0, ey_p, ey_m)[:, None]
         
-        dist = (dx/sigma_x)**2 + (dy/sigma_y)**2
-        W = self.compute_weights(dist, max_distance)
+        dist = np.sqrt((dx/sigma_x)**2 + (dy/sigma_y)**2)
+        W = self.compute_weights(dist, max_distance) 
 
         extent = [x_min, x_max, y_min, y_max]
 
@@ -283,19 +284,18 @@ class InteractiveHRD:
 
         self.fig.canvas.draw_idle()
 
-    def compute_weights(self, distance, max_distance=10):
-        D2 = np.maximum(distance, 1e-12) # avoid blowups
-        max_d2 = max_distance**2
+    def compute_weights(self, distance, max_distance=3):
+        D = np.maximum(distance, 1e-12) # avoid blowups
     
-        W = np.full_like(D2, np.nan)
-        mask = D2 <= max_d2
+        W = np.full_like(D, np.nan)
+        mask = D <= max_distance
     
         if self.current_weight_func == "Inverse square":
-            W[mask] = 0.25 / (D2[mask])**2
-            inner = mask & (D2 <= 0.25)
+            W[mask] = 0.25 / (D[mask])**2
+            inner = mask & (D <= 0.25)
             W[inner] = 1.0
         else: # mahalanobis exponential
-            W[mask] = np.exp(-0.5 * (D2[mask])**2)
+            W[mask] = np.exp(-0.5 * (D[mask])**2)
     
         return W
     # -----------------------------
@@ -546,7 +546,7 @@ class InteractiveHRD:
         sy = np.where(dy >= 0, ey_p, ey_m)
     
         dist = np.sqrt((dx/sx)**2 + (dy/sy)**2)
-        weights = self.compute_weights(dist, max_distance=10)
+        weights = self.compute_weights(dist, max_distance=3)
         self.data['dist'] = dist
         self.data['weight'] = weights
         weights_mask = np.isfinite(weights)
@@ -583,22 +583,44 @@ class InteractiveHRD:
         # The CDF is obtained by integrating the PDF
         def cdf_minus_half_sig3(x):
             return data_col_kde_sig3.integrate_box_1d(-np.inf, x) - 0.5
-        
+
         # Find the median using fsolve (numerical root-finding)
         # Provide an initial guess for the median (e.g., the sample median)
         data_col_median_kde_sig3 = fsolve(cdf_minus_half_sig3, data_eval_points[np.argmax(data_col_y_kde_sig3)])[0]
-        
-        # Estimate uncertainty
-        def cdf_percentiles_lower_sig(x):
-            return data_col_kde_sig3.integrate_box_1d(-np.inf, x) - 0.5 + 0.341 # the 0.341 gets the percentile corresponding to 1 sigma
-        def cdf_percentiles_upper_sig(x):
-            return data_col_kde_sig3.integrate_box_1d(-np.inf, x) - 0.5 - 0.341
-        
-        sig_lower = fsolve(cdf_percentiles_lower_sig, data_eval_points[np.argmax(data_col_y_kde_sig3)])[0]
-        sig_upper = fsolve(cdf_percentiles_upper_sig, data_eval_points[np.argmax(data_col_y_kde_sig3)])[0]
-        
-        up_unc_mass = np.round(sig_upper-data_col_median_kde_sig3,2)
-        low_unc_mass = np.round(data_col_median_kde_sig3-sig_lower,2)
+        # mode (the x value at which the KDE reaches maximum)
+        data_col_mode_kde_sig3 = data_eval_points[np.argmax(data_col_y_kde_sig3)]
+
+        if label == 'm':
+            # Estimate uncertainty
+            def cdf_percentiles_lower_sig(x):
+                return data_col_kde_sig3.integrate_box_1d(-np.inf, x) - 0.5 + 0.341 # the 0.341 gets the percentile corresponding to 1 sigma
+            def cdf_percentiles_upper_sig(x):
+                return data_col_kde_sig3.integrate_box_1d(-np.inf, x) - 0.5 - 0.341
+
+            sig_lower = fsolve(cdf_percentiles_lower_sig, data_col_mode_kde_sig3)[0]
+            sig_upper = fsolve(cdf_percentiles_upper_sig, data_col_mode_kde_sig3)[0]
+
+            up_unc_mass = np.round(sig_upper-data_col_median_kde_sig3,2)
+            low_unc_mass = np.round(data_col_median_kde_sig3-sig_lower,2)
+        elif label == 'Myr':
+            
+            # Relative to the mode
+            def cdf_mode_lower_sigma(x):
+                return data_col_kde_sig3.integrate_box_1d(-np.inf, x) - data_col_kde_sig3.integrate_box_1d(-np.inf, data_col_mode_kde_sig3) + 0.341
+            def cdf_mode_upper_sigma(x):
+                return data_col_kde_sig3.integrate_box_1d(-np.inf, x) - data_col_kde_sig3.integrate_box_1d(-np.inf, data_col_mode_kde_sig3) - 0.341
+
+            ## hide the stuck iteration warning, edge case. ideally bracketed root solver is to be used. we workaround.
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', RuntimeWarning)
+                sig_lower = fsolve(cdf_mode_lower_sigma, data_col_mode_kde_sig3)[0]
+                sig_upper = fsolve(cdf_mode_upper_sigma, data_col_mode_kde_sig3)[0]
+            if sig_lower < data_col.min():
+                sig_lower = data_col.min()
+            elif sig_upper > data_col.max():
+                sig_upper = data_col.max()
+            up_unc_mass = np.round(sig_upper-data_col_mode_kde_sig3,2)
+            low_unc_mass = np.round(data_col_mode_kde_sig3-sig_lower,2)
         
         mass_inds = np.where((sig_lower<data_eval_points) & (data_eval_points<sig_upper))[0]
 
@@ -618,8 +640,10 @@ class InteractiveHRD:
             color='grey', 
             alpha=0.2
         )
+        
+        sig_value = data_col_median_kde_sig3 if label == 'm' else data_col_mode_kde_sig3
         self.hist_artists[label + "_vline"] = self.hist_axes[label].axvline(
-            data_col_median_kde_sig3,
+            sig_value,
             c='k',
             ls='dashed',
             alpha=0.8
@@ -627,22 +651,22 @@ class InteractiveHRD:
 
         if label == "m":
             text = (
-                rf"$M = {data_col_median_kde_sig3:.2f}"
+                rf"$M = {sig_value:.2f}"
                 rf"^{{+{up_unc_mass:.2f}}}"
                 rf"_{{-{low_unc_mass:.2f}}}"
                 r"\,\mathrm{M_{\odot}}$"
             )
         elif label == "Myr":
             ## Make the age plot to be max 5*sigma age
-            self.hist_axes[label].set_xlim(0, data_col_median_kde_sig3+5*up_unc_mass)
+            self.hist_axes[label].set_xlim(0, sig_value+5*up_unc_mass)
             text = (
-                rf"Age$= {data_col_median_kde_sig3:.0f}"
+                rf"Age$= {sig_value:.0f}"
                 rf"^{{+{up_unc_mass:.0f}}}"
                 rf"_{{-{low_unc_mass:.0f}}}\,$"
                 r"Myr"
             )            
         
-        text_x_position = data_col_median_kde_sig3 * 1.05 if label == 'm' else data_col_median_kde_sig3 * 1.3
+        text_x_position = sig_value * 1.05 if label == 'm' else sig_value * 1.3
         current_xlims = self.hist_axes[label].get_xlim()
         if text_x_position+(current_xlims[1]-current_xlims[0])/2.5 > current_xlims[1]:
             text_x_position = current_xlims[0] + 0.05 if label == 'm' else current_xlims[0] + 30
@@ -669,6 +693,9 @@ class InteractiveHRD:
         all_corner_cols = ['m', 'z', 'Myr', 'v_rot', 'sini', 'P_rot', 'R_p',
             'R_eq', 'rho', self.teff_col, self.lum_col, 'new_Dnu', 'p1', 'p5',]
         selected_cols = [col for col in all_corner_cols if col in self.corner_cols]
+        mode_cols = ['Myr', 'sini', 'P_rot']
+        selected_mode_cols = [col for col in mode_cols if col in self.corner_cols]
+
         samples = df[selected_cols].to_numpy()
         ranges = list(np.ones(len(selected_cols)))
         if "P_rot" in selected_cols:
