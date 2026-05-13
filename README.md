@@ -47,6 +47,29 @@ The repository contains both Feather and CSV versions of the synthetic populatio
 | `data/solar_tracks.feather` | Solar-metallicity evolutionary tracks plotted for context. |
 | `data/*.csv` | CSV copies of the same data products. |
 
+### Units for data columns
+
+The data have the following units.
+
+| Variable | Column Name | Unit |
+| --- | --- | ---|
+| mass | m | solar masses |
+| metal mass fraction | z | unitless |
+| age | Myr | Myr |
+| fraction of Keplerian rotation | w\_k | unitless |
+| equatorial rotation velocity | v\_eq | km/s |
+| sine of the rotational inclination | sini | unitless |
+| rotation period | P\_rot | days |
+| polar radius | R\_p | solar radii |
+| equatorial radius | R\_eq | solar radii |
+| stellar density | rho | solar density |
+| binarity (boolean) | binary | bool |
+| binary mass ratio | q\_bin | unitless |
+| _all temperature cols_ | \*\_teff | K |
+| _all luminosity cols_ | \*\_lum | solar luminosities |
+| large frequency separation | Dnu | 1 / d |
+| _all mode frequency cols_ | p\* | 1 / d |
+
 ## Citation
 
 If you use RAPID or the synthetic populations, please cite the associated publication once it is available. Citation details, DOI, and data-release links will be added here after publication.
