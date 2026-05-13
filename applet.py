@@ -1,4 +1,3 @@
-import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import TextBox, Button, CheckButtons, RadioButtons
@@ -6,6 +5,7 @@ from matplotlib import rcParams
 import scipy as sp
 from scipy.optimize import fsolve
 from matplotlib import patheffects as pe
+from matplotlib.lines import Line2D
 import corner
 
 
@@ -560,90 +560,120 @@ class InteractiveHRD:
         self.hist_axes["m"].set_ybound(lower=0) # This has to occur after `draw_idle`
         self.hist_axes["Myr"].set_ybound(lower=0)
 
-    def _draw_hist(self, label, weights):
-        # define a list of x-values that we will evaluate our KDE at
-        # we use the full df rather than the points within 3 sigma because we want to minimise edge effects on the KDE
+    def kde_mode_hpd(self, x, weights, data_eval_points=None, bw_method=None, hpd_mass=0.682):
+        """
+        KDE mode and HPD interval around the mode
+        """
+        valid = np.isfinite(x) & np.isfinite(weights) & (weights > 0)
+        x = x[valid]
+        weights = weights[valid]
+        if data_eval_points is None:
+            data_eval_points = np.linspace(x.min(), x.max(), 256)
+        kde = sp.stats.gaussian_kde(x, weights=weights, bw_method=bw_method)
+        pdf = kde.pdf(data_eval_points)
+        mode_idx = int(np.argmax(pdf))
+        mode = data_eval_points[mode_idx]
+        area = np.trapezoid(pdf, data_eval_points)
+        if area <= 0 or not np.isfinite(area):
+            band_mask = np.zeros(len(data_eval_points))
+            band_mask[mode_idx] = True
+            return mode, mode, mode, band_mask, data_eval_points, pdf
+        p = pdf / area
+        dx = np.gradient(data_eval_points)
+        lo, hi = 0.0, float(np.max(p))
+        for _ in range(80):
+            mid = 0.5 * (lo + hi)
+            mask_mid = p >= mid
+            mass_mid = float(np.sum(p[mask_mid] * dx[mask_mid]))
+            if mass_mid > hpd_mass:
+                lo = mid
+            else:
+                hi = mid
+        mask = p >= 0.5 * (lo + hi)
+        if not np.any(mask):
+            band_mask = np.zeros(len(data_eval_points))
+            band_mask[mode_idx] = True
+            return mode, mode, mode, band_mask, data_eval_points, pdf
+        if not mask[mode_idx]:
+            true_idx = np.where(mask)[0]
+            mode_idx = int(true_idx[np.argmin(np.abs(true_idx - mode_idx))])
+        left_idx = mode_idx
+        while left_idx > 0 and mask[left_idx - 1]:
+            left_idx -= 1
+        right_idx = mode_idx
+        while right_idx < len(mask) - 1 and mask[right_idx + 1]:
+            right_idx += 1
+        band_mask = np.zeros(len(data_eval_points))
+        band_mask[left_idx:right_idx + 1] = True
+        sig_lower = float(data_eval_points[left_idx])
+        sig_upper = float(data_eval_points[right_idx])
+        return mode, sig_lower, sig_upper, band_mask, data_eval_points, pdf
+
+    def kde_sigma_band(self, label, weights, eval_points=None):
+        """
+        KDE center and uncertainty band for histogram panels.
+        """
         weights_mask = np.isfinite(weights)
-        
         data_col = self.data[label].values[weights_mask]
-        
-        # calculate a KDE using all points within 3 sigma of the target
-        # ACTUALLY USE ALL THE DATA, CHECK THIS TO MAKE SURE IT'S OK
+        w_sub = weights[weights_mask]
+        valid = np.isfinite(data_col) & np.isfinite(w_sub) & (w_sub > 0)
+        data_col = data_col[valid]
+        w_sub = w_sub[valid]
+
         if label == 'm':
-            data_eval_points = np.linspace(data_col.min(), data_col.max(), 132)
-            data_col_kde_sig3 = sp.stats.gaussian_kde(data_col, weights=weights[weights_mask], bw_method=self.mass_hist_bw)
-            self.mass_hist_bw =  data_col_kde_sig3.factor
+            if eval_points is not None:
+                data_eval_points = eval_points
+            else:
+                data_eval_points = np.linspace(data_col.min(), data_col.max(), 132)
+            kde = sp.stats.gaussian_kde(data_col, weights=w_sub, bw_method=self.mass_hist_bw)
+            self.mass_hist_bw = kde.factor
             self.bw_box.set_val(np.round(self.mass_hist_bw, 2))
+            pdf = kde.pdf(data_eval_points)
+
+            def cdf_minus_half(xx):
+                return kde.integrate_box_1d(-np.inf, xx) - 0.5
+            kde_median = fsolve(cdf_minus_half, data_eval_points[np.argmax(pdf)])[0]
+
+            def cdf_percentiles_lower_sig(x):
+                return kde.integrate_box_1d(-np.inf, x) - 0.5 + 0.341
+            def cdf_percentiles_upper_sig(x):
+                return kde.integrate_box_1d(-np.inf, x) - 0.5 - 0.341
+            kde_mode = data_eval_points[np.argmax(pdf)]
+            sig_lower = fsolve(cdf_percentiles_lower_sig, kde_mode)[0]
+            sig_upper = fsolve(cdf_percentiles_upper_sig, kde_mode)[0]
+            band_mask = (data_eval_points > sig_lower) & (data_eval_points < sig_upper)
+            center = kde_median
+            return data_col, data_eval_points, pdf, center, sig_lower, sig_upper, \
+                    np.round(sig_upper - kde_median, 2), np.round(kde_median - sig_lower, 2), band_mask
+
+        if eval_points is not None:
+            data_eval_points = eval_points
         else:
             data_eval_points = np.arange(data_col.min(), data_col.max(), 3)
-            data_col_kde_sig3 = sp.stats.gaussian_kde(data_col, weights=weights[weights_mask])
-        data_col_y_kde_sig3 = data_col_kde_sig3.pdf(data_eval_points)
-        
-        # Define a function to find the root of (CDF - 0.5)
-        # The CDF is obtained by integrating the PDF
-        def cdf_minus_half_sig3(x):
-            return data_col_kde_sig3.integrate_box_1d(-np.inf, x) - 0.5
+        mode, sig_lower, sig_upper, band_mask, data_eval_points, pdf = self.kde_mode_hpd(data_col, w_sub,
+            data_eval_points=data_eval_points)
+        center = mode
+        return data_col, data_eval_points, pdf, center, sig_lower, sig_upper, \
+                    np.round(sig_upper - mode, 2), np.round(mode - sig_lower, 2), band_mask
 
-        # Find the median using fsolve (numerical root-finding)
-        # Provide an initial guess for the median (e.g., the sample median)
-        data_col_median_kde_sig3 = fsolve(cdf_minus_half_sig3, data_eval_points[np.argmax(data_col_y_kde_sig3)])[0]
-        # mode (the x value at which the KDE reaches maximum)
-        data_col_mode_kde_sig3 = data_eval_points[np.argmax(data_col_y_kde_sig3)]
-
-        if label == 'm':
-            # Estimate uncertainty
-            def cdf_percentiles_lower_sig(x):
-                return data_col_kde_sig3.integrate_box_1d(-np.inf, x) - 0.5 + 0.341 # the 0.341 gets the percentile corresponding to 1 sigma
-            def cdf_percentiles_upper_sig(x):
-                return data_col_kde_sig3.integrate_box_1d(-np.inf, x) - 0.5 - 0.341
-
-            sig_lower = fsolve(cdf_percentiles_lower_sig, data_col_mode_kde_sig3)[0]
-            sig_upper = fsolve(cdf_percentiles_upper_sig, data_col_mode_kde_sig3)[0]
-
-            up_unc_mass = np.round(sig_upper-data_col_median_kde_sig3,2)
-            low_unc_mass = np.round(data_col_median_kde_sig3-sig_lower,2)
-        elif label == 'Myr':
-            
-            # Relative to the mode
-            def cdf_mode_lower_sigma(x):
-                return data_col_kde_sig3.integrate_box_1d(-np.inf, x) - data_col_kde_sig3.integrate_box_1d(-np.inf, data_col_mode_kde_sig3) + 0.341
-            def cdf_mode_upper_sigma(x):
-                return data_col_kde_sig3.integrate_box_1d(-np.inf, x) - data_col_kde_sig3.integrate_box_1d(-np.inf, data_col_mode_kde_sig3) - 0.341
-
-            ## hide the stuck iteration warning, edge case. ideally bracketed root solver is to be used. we workaround.
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore', RuntimeWarning)
-                sig_lower = fsolve(cdf_mode_lower_sigma, data_col_mode_kde_sig3)[0]
-                sig_upper = fsolve(cdf_mode_upper_sigma, data_col_mode_kde_sig3)[0]
-            if sig_lower < data_col.min():
-                sig_lower = data_col.min()
-            elif sig_upper > data_col.max():
-                sig_upper = data_col.max()
-            up_unc_mass = np.round(sig_upper-data_col_mode_kde_sig3,2)
-            low_unc_mass = np.round(data_col_mode_kde_sig3-sig_lower,2)
-        
-        mass_inds = np.where((sig_lower<data_eval_points) & (data_eval_points<sig_upper))[0]
+    def _draw_hist(self, label, weights):
+        ## KDE grid and uncertainty band
+        data_col, data_eval_points, pdf, center, sig_lower, sig_upper, up_unc, low_unc, band_mask = self.kde_sigma_band(label, weights)
 
         if self.hist_artists[label] is None:
-            (artist,) = self.hist_axes[label].plot(data_eval_points, data_col_y_kde_sig3)
+            (artist,) = self.hist_axes[label].plot(data_eval_points, pdf)
             self.hist_artists[label] = artist
         else:
-            self.hist_artists[label].set_data(data_eval_points, data_col_y_kde_sig3)
+            self.hist_artists[label].set_data(data_eval_points, pdf)
             self.hist_artists[label + "_fill"].remove()
             self.hist_artists[label + "_vline"].remove()
             self.hist_artists[label + "_text"].remove()
             
-        self.hist_artists[label + "_fill"] = self.hist_axes[label].fill_between(
-            data_eval_points[mass_inds],
-            data_col_y_kde_sig3[mass_inds],
-            y2=0, 
-            color='grey', 
-            alpha=0.2
-        )
-        
-        sig_value = data_col_median_kde_sig3 if label == 'm' else data_col_mode_kde_sig3
+        self.hist_artists[label + "_fill"] = self.hist_axes[label].fill_between(data_eval_points, pdf, y2=0,
+            where=band_mask, interpolate=True, color='grey', alpha=0.2)
+
         self.hist_artists[label + "_vline"] = self.hist_axes[label].axvline(
-            sig_value,
+            center,
             c='k',
             ls='dashed',
             alpha=0.8
@@ -651,29 +681,29 @@ class InteractiveHRD:
 
         if label == "m":
             text = (
-                rf"$M = {sig_value:.2f}"
-                rf"^{{+{up_unc_mass:.2f}}}"
-                rf"_{{-{low_unc_mass:.2f}}}"
+                rf"$M = {center:.2f}"
+                rf"^{{+{up_unc:.2f}}}"
+                rf"_{{-{low_unc:.2f}}}"
                 r"\,\mathrm{M_{\odot}}$"
             )
         elif label == "Myr":
             ## Make the age plot to be max 5*sigma age
-            self.hist_axes[label].set_xlim(0, sig_value+5*up_unc_mass)
+            self.hist_axes[label].set_xlim(0, center+5*up_unc)
             text = (
-                rf"Age$= {sig_value:.0f}"
-                rf"^{{+{up_unc_mass:.0f}}}"
-                rf"_{{-{low_unc_mass:.0f}}}\,$"
+                rf"Age$= {center:.0f}"
+                rf"^{{+{up_unc:.0f}}}"
+                rf"_{{-{low_unc:.0f}}}\,$"
                 r"Myr"
             )            
         
-        text_x_position = sig_value * 1.05 if label == 'm' else sig_value * 1.3
+        text_x_position = center * 1.05 if label == 'm' else center * 1.3
         current_xlims = self.hist_axes[label].get_xlim()
         if text_x_position+(current_xlims[1]-current_xlims[0])/2.5 > current_xlims[1]:
             text_x_position = current_xlims[0] + 0.05 if label == 'm' else current_xlims[0] + 30
 
         self.hist_artists[label + "_text"] = self.hist_axes[label].text(
             text_x_position,
-            0.9 * max(data_col_y_kde_sig3),
+            0.9 * max(pdf),
             text,
             fontsize='small',
             path_effects=[pe.withStroke(linewidth=5, foreground='white')]
@@ -681,7 +711,19 @@ class InteractiveHRD:
 
         self.hist_axes[label].relim()
         self.hist_axes[label].autoscale_view()
-        
+
+    def corner_panel_bounds(self, x, weights, range_frac):
+        """
+        Match corner.core: a float in (0, 1] sets equal-tailed quantile bounds for the panel.
+        """
+        valid = np.isfinite(x) & np.isfinite(weights) & (weights > 0)
+        x = x[valid]
+        weights = weights[valid]
+        if len(x) == 0:
+            return [0.0, 1.0]
+        q = [0.5 - 0.5 * range_frac, 0.5 + 0.5 * range_frac]
+        return corner.quantile(x, q, weights=weights)
+
     def plot_corner(self, event=None):
         self.compute()
         labels_dict = {'m':'M', 'z':'Z', 'Myr':'Age', 'v_rot':r'V$_{\rm eq}$', 'sini':'sin i', 'P_rot':r'P$_{\rm rot}$', 
@@ -690,18 +732,12 @@ class InteractiveHRD:
 
         df = self.result.copy()
         weights = df.weight
+        w = weights.values
         all_corner_cols = ['m', 'z', 'Myr', 'v_rot', 'sini', 'P_rot', 'R_p',
             'R_eq', 'rho', self.teff_col, self.lum_col, 'new_Dnu', 'p1', 'p5',]
         selected_cols = [col for col in all_corner_cols if col in self.corner_cols]
         mode_cols = ['Myr', 'sini', 'P_rot']
         selected_mode_cols = [col for col in mode_cols if col in self.corner_cols]
-
-        samples = df[selected_cols].to_numpy()
-        ranges = list(np.ones(len(selected_cols)))
-        if "P_rot" in selected_cols:
-            ranges[selected_cols.index("P_rot")] = 0.90
-        labels = [labels_dict[col] for col in selected_cols]
-        self.corner_fig = corner.corner(samples, labels=labels, range=ranges, weights=weights.values, color='cornflowerblue', show_titles=False, quantiles=[0.16,0.5,0.84])
 
         ## title formatting
         title_fmts = np.repeat(".2f", len(selected_cols))
@@ -710,14 +746,86 @@ class InteractiveHRD:
             if col in fmt_overrides:
                 title_fmts[i] = fmt_overrides[col]
 
+        samples = df[selected_cols].to_numpy()
+        ranges = list(np.ones(len(selected_cols)))
+        if "P_rot" in selected_cols:
+            ranges[selected_cols.index("P_rot")] = 0.90
+        labels = [labels_dict[col] for col in selected_cols]
+        sigma_lw = 1.2
+        center_lw = 2.8
+        # corner_bins = 20
+        # bins_list = []
+        # for i, col in enumerate(selected_cols):
+        #     xcol = samples[:, i]
+        #     emin, emax = self.corner_panel_bounds(xcol, w, ranges[i])
+        #     # if col == 'Myr':
+        #     #     myr_bin =  max(1, int(round((emax - emin) / 50.0)))
+        #     #     bins_list.append(myr_bin)
+        #     # else:
+        #     bins_list.append(corner_bins)
+        self.corner_fig = corner.corner(samples, labels=labels, range=ranges, weights=weights.values,
+            color='cornflowerblue', show_titles=False, quantiles=[])
+
+        
+
         axes = np.array(self.corner_fig.axes).reshape((len(selected_cols), len(selected_cols)))
+        w_full = self.data['weight'].values
+        median_names = [labels_dict[c] for c in selected_cols if c not in selected_mode_cols]
+        mode_names = [labels_dict[c] for c in selected_mode_cols]
+
         for i, col in enumerate(selected_cols):
-            q16, q50, q84 = corner.quantile(samples[:, i], [0.16, 0.5, 0.84], weights=weights.values)
+            ax = axes[i, i]
+            x = samples[:, i]
+            if col in selected_mode_cols:
+                if col == 'Myr':
+                    # _, _, _, center, sig_lower, sig_upper, _, _, _ = self.kde_sigma_band('Myr', w_full, eval_points=myr_eval)
+                    center, sig_lower, sig_upper, _, _, _ = self.kde_mode_hpd(x, w)
+                else:
+                    emin, emax = self.corner_panel_bounds(x, w, ranges[i])
+                    xg = np.linspace(emin, emax, 256)
+                    center, sig_lower, sig_upper, _, _, _ = self.kde_mode_hpd(x, w, data_eval_points=xg)
+                center_color = 'indianred'
+            else:
+                if col == 'm':
+                    # _, _, _, center, sig_lower, sig_upper, _, _, _ = self.kde_sigma_band('m', w_full)
+                    center, sig_lower, sig_upper, _, _, _ = self.kde_mode_hpd(x, w)
+                else:
+                    valid = np.isfinite(x) & np.isfinite(w) & (w > 0)
+                    x_valid = x[valid]
+                    w_valid = w[valid]
+                    if len(x_valid) == 0:
+                        center = 0.0
+                        sig_lower, sig_upper = 0.0, 0.0
+                    else:
+                        q16, q50, q84 = corner.quantile(x_valid, [0.16, 0.5, 0.84], weights=w_valid)
+                        center = q50
+                        sig_lower, sig_upper = q16, q84
+                center_color = 'cornflowerblue'
+
+            ax.axvspan(sig_lower, sig_upper, facecolor='cornflowerblue', alpha=0.1, edgecolor='none', zorder=1)
+            ax.axvline(sig_lower, linestyle='--', color='cornflowerblue', linewidth=sigma_lw, zorder=5)
+            ax.axvline(sig_upper, linestyle='--', color='cornflowerblue', linewidth=sigma_lw, zorder=5)
+            ax.axvline(center, linestyle='--', color=center_color, linewidth=center_lw, zorder=6)
+            qm, qp = center - sig_lower, sig_upper - center
             fmt = title_fmts[i]
-            qm, qp = q50-q16, q84-q50
-            title = f"${q50:{fmt}}^{{+{qp:{fmt}}}}_{{-{qm:{fmt}}}}$"
-            axes[i, i].set_title(title)
-        self.corner_fig.savefig(self.corner_plot_name)
+            title = f"${center:{fmt}}^{{+{qp:{fmt}}}}_{{-{qm:{fmt}}}}$"
+            if col in selected_mode_cols:
+               ax.set_title(title, color=center_color)
+            else:
+                ax.set_title(title)
+
+        legend_handles = []
+        legend_labels = []
+        if median_names:
+            legend_handles.append(Line2D([0], [0], color='cornflowerblue', linestyle='--', linewidth=center_lw))
+            legend_labels.append("Median")
+        if mode_names:
+            legend_handles.append(Line2D([0], [0], color='indianred', linestyle='--', linewidth=center_lw))
+            legend_labels.append("Mode")
+        if legend_handles:
+            self.corner_fig.legend(legend_handles, legend_labels, loc='upper left', bbox_to_anchor=(1.01, 0.99),
+                bbox_transform=self.corner_fig.transFigure, fontsize='small', frameon=True)
+        self.corner_fig.savefig(self.corner_plot_name, bbox_inches='tight')
 
     def make_submit(self, key):
         def submit(text):
