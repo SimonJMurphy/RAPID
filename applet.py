@@ -5,6 +5,7 @@ from matplotlib import rcParams
 import scipy as sp
 from matplotlib import patheffects as pe
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 import corner
 
 
@@ -762,7 +763,7 @@ class InteractiveHRD:
                 xg = np.linspace(emin, emax, 256)
                 in_range = (x >= emin) & (x <= emax)  ## mask to handle P_rot like cuts
                 center, sig_lower, sig_upper, _, _, _ = self.kde_mode_hpd(x[in_range], w[in_range], data_eval_points=xg)
-                center_color = 'indianred'
+                color = 'indianred'
             else:
                 valid = np.isfinite(x) & np.isfinite(w) & (w > 0)
                 x_valid = x[valid]
@@ -774,17 +775,17 @@ class InteractiveHRD:
                     q16, q50, q84 = corner.quantile(x_valid, [0.16, 0.5, 0.84], weights=w_valid)
                     center = q50
                     sig_lower, sig_upper = q16, q84
-                center_color = 'cornflowerblue'
+                color = 'cornflowerblue'
 
-            ax.axvspan(sig_lower, sig_upper, facecolor='cornflowerblue', alpha=0.1, edgecolor='none', zorder=1)
-            ax.axvline(sig_lower, linestyle='--', color='cornflowerblue', linewidth=sigma_lw, zorder=5)
-            ax.axvline(sig_upper, linestyle='--', color='cornflowerblue', linewidth=sigma_lw, zorder=5)
-            ax.axvline(center, linestyle='--', color=center_color, linewidth=center_lw, zorder=6)
+            ax.axvspan(sig_lower, sig_upper, facecolor=color, alpha=0.1, edgecolor='none', zorder=1)
+            ax.axvline(sig_lower, linestyle='--', color=color, linewidth=sigma_lw, zorder=5)
+            ax.axvline(sig_upper, linestyle='--', color=color, linewidth=sigma_lw, zorder=5)
+            ax.axvline(center, linestyle='--', color=color, linewidth=center_lw, zorder=6)
             qm, qp = center - sig_lower, sig_upper - center
             fmt = title_fmts[i]
             title = f"${center:{fmt}}^{{+{qp:{fmt}}}}_{{-{qm:{fmt}}}}$"
             if col in selected_mode_cols:
-               ax.set_title(title, color=center_color)
+               ax.set_title(title, color=color)
             else:
                 ax.set_title(title)
 
@@ -793,12 +794,16 @@ class InteractiveHRD:
         if median_names:
             legend_handles.append(Line2D([0], [0], color='cornflowerblue', linestyle='--', linewidth=center_lw))
             legend_labels.append("Median")
+            legend_handles.append(Patch(facecolor='cornflowerblue', edgecolor='none', alpha=0.5))
+            legend_labels.append("Central credible region")
         if mode_names:
             legend_handles.append(Line2D([0], [0], color='indianred', linestyle='--', linewidth=center_lw))
             legend_labels.append("Mode")
+            legend_handles.append(Patch(facecolor='indianred', edgecolor='none', alpha=0.5))
+            legend_labels.append("HPD region")
         if legend_handles:
-            self.corner_fig.legend(legend_handles, legend_labels, loc='upper left', bbox_to_anchor=(1.01, 0.99),
-                bbox_transform=self.corner_fig.transFigure, fontsize='small', frameon=True)
+            self.corner_fig.legend(legend_handles, legend_labels, loc='upper right', 
+                                bbox_transform=self.corner_fig.transFigure, fontsize='large', frameon=True)
         self.corner_fig.savefig(self.corner_plot_name, bbox_inches='tight')
 
     def make_submit(self, key):
