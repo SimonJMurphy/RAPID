@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import TextBox, Button, CheckButtons, RadioButtons
 from matplotlib import rcParams
 import scipy as sp
-from scipy.optimize import fsolve
 from matplotlib import patheffects as pe
 from matplotlib.lines import Line2D
 import corner
@@ -561,58 +560,58 @@ class InteractiveHRD:
         self.hist_axes["Myr"].set_ybound(lower=0)
 
     def kde_mode_hpd(self, x, weights, data_eval_points=None, bw_method=None, hpd_mass=0.682):
-        """
-        KDE mode and HPD interval around the mode
-        """
+        """Returns (mode, hpd_lower, hpd_upper, band_mask, eval_points, pdf)."""
+        # Drop non-finite and zero-weight samples
         valid = np.isfinite(x) & np.isfinite(weights) & (weights > 0)
-        x = x[valid]
-        weights = weights[valid]
+        x, weights = x[valid], weights[valid]
+
         if data_eval_points is None:
             data_eval_points = np.linspace(x.min(), x.max(), 256)
+
+        # Fit weighted KDE; mode = argmax of smooth density on the eval grid
         kde = sp.stats.gaussian_kde(x, weights=weights, bw_method=bw_method)
         pdf = kde.pdf(data_eval_points)
         mode_idx = int(np.argmax(pdf))
         mode = data_eval_points[mode_idx]
+
+        # Normalise to a true probability density (if the eval grid is finite, like 90% P_rot range)
         area = np.trapezoid(pdf, data_eval_points)
         if area <= 0 or not np.isfinite(area):
             band_mask = np.zeros(len(data_eval_points))
             band_mask[mode_idx] = True
             return mode, mode, mode, band_mask, data_eval_points, pdf
         p = pdf / area
-        dx = np.gradient(data_eval_points)
-        lo, hi = 0.0, float(np.max(p))
-        for _ in range(80):
-            mid = 0.5 * (lo + hi)
-            mask_mid = p >= mid
-            mass_mid = float(np.sum(p[mask_mid] * dx[mask_mid]))
-            if mass_mid > hpd_mass:
-                lo = mid
-            else:
-                hi = mid
-        mask = p >= 0.5 * (lo + hi)
-        if not np.any(mask):
-            band_mask = np.zeros(len(data_eval_points))
-            band_mask[mode_idx] = True
-            return mode, mode, mode, band_mask, data_eval_points, pdf
-        if not mask[mode_idx]:
-            true_idx = np.where(mask)[0]
-            mode_idx = int(true_idx[np.argmin(np.abs(true_idx - mode_idx))])
-        left_idx = mode_idx
-        while left_idx > 0 and mask[left_idx - 1]:
-            left_idx -= 1
-        right_idx = mode_idx
-        while right_idx < len(mask) - 1 and mask[right_idx + 1]:
-            right_idx += 1
-        band_mask = np.zeros(len(data_eval_points))
+        dx = np.gradient(data_eval_points)  # grid spacing (uniform for linspace)
+
+        # Sort grid points by descending density and accumulate probability mass.
+        # The threshold is the density of the last point added before the running
+        # total reaches hpd_mass
+        order = np.argsort(p)[::-1]
+        cumulative = np.cumsum(p[order] * dx[order])
+        k = min(int(np.searchsorted(cumulative, hpd_mass)), len(order) - 1)
+        threshold = p[order[k]]
+        mask = p >= threshold
+
+        # if not np.any(mask):
+        #     band_mask = np.zeros(len(data_eval_points), dtype=bool)
+        #     band_mask[mode_idx] = True
+        #     return mode, mode, mode, band_mask, data_eval_points, pdf
+
+        # For a unimodal KDE the mask is one contiguous block; first/last True index = HPD bounds
+        masked_idx = np.where(mask)[0]
+        left_idx, right_idx = masked_idx[0], masked_idx[-1]
+        band_mask = np.zeros(len(data_eval_points), dtype=bool)
         band_mask[left_idx:right_idx + 1] = True
-        sig_lower = float(data_eval_points[left_idx])
-        sig_upper = float(data_eval_points[right_idx])
-        return mode, sig_lower, sig_upper, band_mask, data_eval_points, pdf
+        return mode, float(data_eval_points[left_idx]), float(data_eval_points[right_idx]), \
+               band_mask, data_eval_points, pdf
 
     def kde_sigma_band(self, label, weights, eval_points=None):
+        """Compute KDE, center estimate, and uncertainty band for a histogram panel.
+
+        Returns (data_col, eval_points, pdf, center, sig_lower, sig_upper, up_unc, low_unc, band_mask).
+        Mass uses median + equal-tailed 16-84% interval; all other columns use mode + HPD 68.2%.
         """
-        KDE center and uncertainty band for histogram panels.
-        """
+        # Pull the column and drop rows where either the data or the weight is non-finite
         weights_mask = np.isfinite(weights)
         data_col = self.data[label].values[weights_mask]
         w_sub = weights[weights_mask]
@@ -621,39 +620,26 @@ class InteractiveHRD:
         w_sub = w_sub[valid]
 
         if label == 'm':
-            if eval_points is not None:
-                data_eval_points = eval_points
-            else:
-                data_eval_points = np.linspace(data_col.min(), data_col.max(), 132)
+            data_eval_points = eval_points if eval_points is not None else \
+                np.linspace(data_col.min(), data_col.max(), 132)
+            # Fit KDE and sync the bandwidth back to the UI text box
             kde = sp.stats.gaussian_kde(data_col, weights=w_sub, bw_method=self.mass_hist_bw)
             self.mass_hist_bw = kde.factor
             self.bw_box.set_val(np.round(self.mass_hist_bw, 2))
             pdf = kde.pdf(data_eval_points)
-
-            def cdf_minus_half(xx):
-                return kde.integrate_box_1d(-np.inf, xx) - 0.5
-            kde_median = fsolve(cdf_minus_half, data_eval_points[np.argmax(pdf)])[0]
-
-            def cdf_percentiles_lower_sig(x):
-                return kde.integrate_box_1d(-np.inf, x) - 0.5 + 0.341
-            def cdf_percentiles_upper_sig(x):
-                return kde.integrate_box_1d(-np.inf, x) - 0.5 - 0.341
-            kde_mode = data_eval_points[np.argmax(pdf)]
-            sig_lower = fsolve(cdf_percentiles_lower_sig, kde_mode)[0]
-            sig_upper = fsolve(cdf_percentiles_upper_sig, kde_mode)[0]
-            band_mask = (data_eval_points > sig_lower) & (data_eval_points < sig_upper)
-            center = kde_median
+            # Median and equal-tailed 1-sigma interval (16th/84th percentile)
+            sig_lower, center, sig_upper = corner.quantile(data_col, [0.16, 0.5, 0.84], weights=w_sub)
+            band_mask = (data_eval_points >= sig_lower) & (data_eval_points <= sig_upper)
             return data_col, data_eval_points, pdf, center, sig_lower, sig_upper, \
-                    np.round(sig_upper - kde_median, 2), np.round(kde_median - sig_lower, 2), band_mask
+                    np.round(sig_upper - center, 2), np.round(center - sig_lower, 2), band_mask
 
-        if eval_points is not None:
-            data_eval_points = eval_points
-        else:
-            data_eval_points = np.arange(data_col.min(), data_col.max(), 3)
-        mode, sig_lower, sig_upper, band_mask, data_eval_points, pdf = self.kde_mode_hpd(data_col, w_sub,
-            data_eval_points=data_eval_points)
-        center = mode
-        return data_col, data_eval_points, pdf, center, sig_lower, sig_upper, \
+        # Age (Myr) and any future columns: mode + HPD 68.2%
+        # 3 Myr step keeps the grid coarse enough to be fast but fine enough for the mode
+        data_eval_points = eval_points if eval_points is not None else \
+            np.arange(data_col.min(), data_col.max(), 3)
+        mode, sig_lower, sig_upper, band_mask, data_eval_points, pdf = self.kde_mode_hpd(
+            data_col, w_sub, data_eval_points=data_eval_points)
+        return data_col, data_eval_points, pdf, mode, sig_lower, sig_upper, \
                     np.round(sig_upper - mode, 2), np.round(mode - sig_lower, 2), band_mask
 
     def _draw_hist(self, label, weights):
@@ -777,29 +763,24 @@ class InteractiveHRD:
             ax = axes[i, i]
             x = samples[:, i]
             if col in selected_mode_cols:
-                if col == 'Myr':
-                    # _, _, _, center, sig_lower, sig_upper, _, _, _ = self.kde_sigma_band('Myr', w_full, eval_points=myr_eval)
-                    center, sig_lower, sig_upper, _, _, _ = self.kde_mode_hpd(x, w)
-                else:
-                    emin, emax = self.corner_panel_bounds(x, w, ranges[i])
-                    xg = np.linspace(emin, emax, 256)
-                    center, sig_lower, sig_upper, _, _, _ = self.kde_mode_hpd(x, w, data_eval_points=xg)
+                emin, emax = ax.get_xlim()
+                xg = np.linspace(emin, emax, 256)
+                in_range = (x >= emin) & (x <= emax)  ## mask to handle P_rot like cuts
+                center, sig_lower, sig_upper, _, _, _ = self.kde_mode_hpd(
+                    x[in_range], w[in_range], data_eval_points=xg
+                )
                 center_color = 'indianred'
             else:
-                if col == 'm':
-                    # _, _, _, center, sig_lower, sig_upper, _, _, _ = self.kde_sigma_band('m', w_full)
-                    center, sig_lower, sig_upper, _, _, _ = self.kde_mode_hpd(x, w)
+                valid = np.isfinite(x) & np.isfinite(w) & (w > 0)
+                x_valid = x[valid]
+                w_valid = w[valid]
+                if len(x_valid) == 0:
+                    center = 0.0
+                    sig_lower, sig_upper = 0.0, 0.0
                 else:
-                    valid = np.isfinite(x) & np.isfinite(w) & (w > 0)
-                    x_valid = x[valid]
-                    w_valid = w[valid]
-                    if len(x_valid) == 0:
-                        center = 0.0
-                        sig_lower, sig_upper = 0.0, 0.0
-                    else:
-                        q16, q50, q84 = corner.quantile(x_valid, [0.16, 0.5, 0.84], weights=w_valid)
-                        center = q50
-                        sig_lower, sig_upper = q16, q84
+                    q16, q50, q84 = corner.quantile(x_valid, [0.16, 0.5, 0.84], weights=w_valid)
+                    center = q50
+                    sig_lower, sig_upper = q16, q84
                 center_color = 'cornflowerblue'
 
             ax.axvspan(sig_lower, sig_upper, facecolor='cornflowerblue', alpha=0.1, edgecolor='none', zorder=1)
