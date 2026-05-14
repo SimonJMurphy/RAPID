@@ -582,14 +582,14 @@ class InteractiveHRD:
             band_mask[mode_idx] = True
             return mode, mode, mode, band_mask, data_eval_points, pdf
         p = pdf / area
-        dx = np.gradient(data_eval_points)  # grid spacing
 
         # Sort grid points by descending density and accumulate probability mass.
         # The threshold is the density of the last point added before the running
         # total reaches hpd_mass
         order = np.argsort(p)[::-1]
+        dx = np.gradient(data_eval_points)  # grid spacing
         cumulative = np.cumsum(p[order] * dx[order])
-        k = min(int(np.searchsorted(cumulative, hpd_mass)), len(order) - 1)
+        k = int(np.searchsorted(cumulative, hpd_mass))
         threshold = p[order[k]]
         mask = p >= threshold
 
