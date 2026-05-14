@@ -561,9 +561,9 @@ class InteractiveHRD:
 
     def kde_mode_hpd(self, x, weights, data_eval_points=None, bw_method=None, hpd_mass=0.682):
         """Returns (mode, hpd_lower, hpd_upper, band_mask, eval_points, pdf)."""
-        # Drop non-finite and zero-weight samples
-        valid = np.isfinite(x) & np.isfinite(weights) & (weights > 0)
-        x, weights = x[valid], weights[valid]
+        # finite mask
+        valid_mask = np.isfinite(x) & np.isfinite(weights) & (weights > 0)
+        x, weights = x[valid_mask], weights[valid_mask]
 
         if data_eval_points is None:
             data_eval_points = np.linspace(x.min(), x.max(), 256)
@@ -574,14 +574,14 @@ class InteractiveHRD:
         mode_idx = int(np.argmax(pdf))
         mode = data_eval_points[mode_idx]
 
-        # Normalise to a true probability density (if the eval grid is finite, like 90% P_rot range)
+        # Normalise to a true probability density (if the eval grid is limited, like 90% P_rot range)
         area = np.trapezoid(pdf, data_eval_points)
         if area <= 0 or not np.isfinite(area):
             band_mask = np.zeros(len(data_eval_points))
             band_mask[mode_idx] = True
             return mode, mode, mode, band_mask, data_eval_points, pdf
         p = pdf / area
-        dx = np.gradient(data_eval_points)  # grid spacing (uniform for linspace)
+        dx = np.gradient(data_eval_points)  # grid spacing
 
         # Sort grid points by descending density and accumulate probability mass.
         # The threshold is the density of the last point added before the running
@@ -592,12 +592,7 @@ class InteractiveHRD:
         threshold = p[order[k]]
         mask = p >= threshold
 
-        # if not np.any(mask):
-        #     band_mask = np.zeros(len(data_eval_points), dtype=bool)
-        #     band_mask[mode_idx] = True
-        #     return mode, mode, mode, band_mask, data_eval_points, pdf
-
-        # For a unimodal KDE the mask is one contiguous block; first/last True index = HPD bounds
+        # index of the first and the last True values
         masked_idx = np.where(mask)[0]
         left_idx, right_idx = masked_idx[0], masked_idx[-1]
         band_mask = np.zeros(len(data_eval_points), dtype=bool)
@@ -611,13 +606,13 @@ class InteractiveHRD:
         Returns (data_col, eval_points, pdf, center, sig_lower, sig_upper, up_unc, low_unc, band_mask).
         Mass uses median + equal-tailed 16-84% interval; all other columns use mode + HPD 68.2%.
         """
-        # Pull the column and drop rows where either the data or the weight is non-finite
+        # finite mask
         weights_mask = np.isfinite(weights)
         data_col = self.data[label].values[weights_mask]
         w_sub = weights[weights_mask]
-        valid = np.isfinite(data_col) & np.isfinite(w_sub) & (w_sub > 0)
-        data_col = data_col[valid]
-        w_sub = w_sub[valid]
+        valid_mask = np.isfinite(data_col) & np.isfinite(w_sub) & (w_sub > 0)
+        data_col = data_col[valid_mask]
+        w_sub = w_sub[valid_mask]
 
         if label == 'm':
             data_eval_points = eval_points if eval_points is not None else \
@@ -633,8 +628,8 @@ class InteractiveHRD:
             return data_col, data_eval_points, pdf, center, sig_lower, sig_upper, \
                     np.round(sig_upper - center, 2), np.round(center - sig_lower, 2), band_mask
 
-        # Age (Myr) and any future columns: mode + HPD 68.2%
-        # 3 Myr step keeps the grid coarse enough to be fast but fine enough for the mode
+        # Age (Myr)  mode + HPD 68.2%
+        # 3 Myr step 
         data_eval_points = eval_points if eval_points is not None else \
             np.arange(data_col.min(), data_col.max(), 3)
         mode, sig_lower, sig_upper, band_mask, data_eval_points, pdf = self.kde_mode_hpd(
@@ -766,9 +761,7 @@ class InteractiveHRD:
                 emin, emax = ax.get_xlim()
                 xg = np.linspace(emin, emax, 256)
                 in_range = (x >= emin) & (x <= emax)  ## mask to handle P_rot like cuts
-                center, sig_lower, sig_upper, _, _, _ = self.kde_mode_hpd(
-                    x[in_range], w[in_range], data_eval_points=xg
-                )
+                center, sig_lower, sig_upper, _, _, _ = self.kde_mode_hpd(x[in_range], w[in_range], data_eval_points=xg)
                 center_color = 'indianred'
             else:
                 valid = np.isfinite(x) & np.isfinite(w) & (w > 0)
