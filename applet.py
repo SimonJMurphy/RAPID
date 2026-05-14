@@ -678,10 +678,15 @@ class InteractiveHRD:
                 r"Myr"
             )            
         
-        text_x_position = center * 1.05 if label == 'm' else center * 1.3
+        self.hist_axes[label].relim()
+        self.hist_axes[label].autoscale_view()
+
+        text_x_position = center + 0.07 if label == 'm' else center + 100
         current_xlims = self.hist_axes[label].get_xlim()
-        if text_x_position+(current_xlims[1]-current_xlims[0])/2.5 > current_xlims[1]:
-            text_x_position = current_xlims[0] + 0.05 if label == 'm' else current_xlims[0] + 30
+        if label == 'm' and text_x_position + (current_xlims[1]-current_xlims[0])/2.5 > current_xlims[1]:
+            text_x_position = center - (current_xlims[1]-current_xlims[0])/2.5
+        elif label == 'Myr' and text_x_position + (current_xlims[1]-current_xlims[0])/2.5 > current_xlims[1]:
+            text_x_position = center - (current_xlims[1]-current_xlims[0])/2.5
 
         self.hist_artists[label + "_text"] = self.hist_axes[label].text(
             text_x_position,
@@ -691,8 +696,7 @@ class InteractiveHRD:
             path_effects=[pe.withStroke(linewidth=5, foreground='white')]
         )
 
-        self.hist_axes[label].relim()
-        self.hist_axes[label].autoscale_view()
+        
 
     def corner_panel_bounds(self, x, weights, range_frac):
         """
