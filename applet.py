@@ -8,6 +8,8 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 import corner
 
+## Prefer trapezoid (numpy >= 2.0) or fall back to trapz on older versions.
+np_trapezoid = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
 
 rcParams["xtick.direction"] = "in"
 rcParams["ytick.direction"] = "in"
@@ -576,7 +578,7 @@ class InteractiveHRD:
         mode = data_eval_points[mode_idx]
 
         # Normalise to a true probability density (if the eval grid is limited, like 90% P_rot range)
-        area = np.trapezoid(pdf, data_eval_points)
+        area = np_trapezoid(pdf, data_eval_points)
         if area <= 0 or not np.isfinite(area):
             band_mask = np.zeros(len(data_eval_points))
             band_mask[mode_idx] = True
